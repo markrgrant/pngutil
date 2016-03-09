@@ -27,8 +27,12 @@ executable pngcreate
   main-is:             PNGCreate.hs
   -- other-modules:       
   other-extensions:    OverloadedStrings
-  build-depends:       pngutil
-  
+  build-depends:       base >=4.7 && <4.8,
+                       bytestring >=0.10 && <0.11,
+                       binary >=0.7 && <0.8,
+                       attoparsec >=0.12 && <0.13
+
+ 
   -- hs-source-dirs:      
   default-language:    Haskell2010
 
