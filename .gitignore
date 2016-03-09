@@ -1,3 +1,8 @@
 doc
 cabal.sandbox.config
 dist
+*.swp
+*.hi
+*.o
+*.save0
+.cabal-sandbox
