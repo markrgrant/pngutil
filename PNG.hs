@@ -382,7 +382,7 @@ instance Show FilterMethod where
 data InterlaceMethod = Null | Adam7 deriving (Eq)
 
 instance Show InterlaceMethod where
-    show Null = "no interface"
+    show Null = "none"
     show Adam7 = "Adam7"
 
 instance Binary InterlaceMethod where
