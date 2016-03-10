@@ -1,25 +1,30 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+-- This module provides constructors for the various types that are 
+-- defined in the PNG specification.  These constructors return either
+-- a string describing the first error encountered in the input, or the value
+-- of the desired type.
+
 module PNG where
 
 
-import qualified Data.ByteString as B
 import Data.Binary.Get (runGet, getWord32be, getWord8)
-import Data.Binary
-import Data.Attoparsec.ByteString as A
-import Data.Word
-import qualified Data.ByteString.Lazy as L
+import Data.Binary (Binary, put, get)
+import Data.Word (Word8, Word32)
+import qualified Data.Attoparsec.ByteString as A
+import qualified Data.ByteString as B
 
 
 
 ---------------------------- Reference Image ---------------------------------
-
 -- A reference image type.  It is an abstraction capable of representing any
 -- image (grayscale, trucolor with alpha, etc.).  Different channels can
 -- have different sample depths.
+
 data RefImg = RefImg {
     refWidth :: Word32,
     refHeight :: Word32,
+    refColorType :: ColorType,
     refRed :: Channel,
     refBlue :: Channel,
     refGreen :: Channel,
@@ -33,6 +38,59 @@ data Channel = Channel {
     channelSamples :: B.ByteString
 }
 
+
+replaceLeft :: Either String a -> String -> Either String a
+replaceLeft (Right x) msg = Right x
+replaceLeft (Left x) msg = Left msg
+
+
+createRefImg :: Word32 -> Word32 -> Word8 -> Word8 -> Word8 ->
+    Word8 -> Word8 -> Either String RefImg
+createRefImg w h c r g b a = do
+    vw <- replaceLeft (createLength w) "width must be > 0"
+    vh <- replaceLeft (createLength h) "height must be > 0"
+    vc <- (createColorType c)
+    vr <- replaceLeft (createChannel vw vh vc r) "red bit depth is invalid"
+    vg <- replaceLeft (createChannel vw vh vc g) "green bit depth is invalid"
+    vb <- replaceLeft (createChannel vw vh vc b) "blue bit depth  is invalid"
+    va <- replaceLeft (createChannel vw vh vc a) "alpha bit depth is invalid"
+    return RefImg {refWidth=w, refHeight=h,refColorType=vc, refRed=vr,
+        refGreen=vg, refBlue=vb, refAlpha=va}
+
+
+createColorType :: Word8 -> Either String ColorType
+createColorType c =
+    case c of
+        0 -> return Grayscale
+        2 -> return Truecolor
+        3 -> return IndexedColor
+        4 -> return GrayscaleWithAlpha
+        6 -> return TruecolorWithAlpha
+        _ -> Left "unrecognized color type"
+
+
+
+
+-- A length is an integral value greater than zero
+createLength :: Word32 -> Either String Word32
+createLength x = if x <= 0
+    then Left "length must be > 0"
+    else Right x
+
+
+createChannel :: Word32 -> Word32 -> ColorType -> Word8 -> Either String Channel
+createChannel w h ct d = 
+    let maybeDepths = lookup ct bitDepths
+    in case maybeDepths of
+        Nothing -> Left "color type not found"
+        Just depths -> if d `notElem` depths
+                           then Left "invalid depth for color type"
+                           else Right $ Channel {
+                               channelDepth=BitDepth d,
+                               channelSamples=B.replicate (iw*ih*id `div` 8) 1}
+    where iw = fromIntegral w 
+          ih = fromIntegral h 
+          id = fromIntegral d 
 
 --------------------------- PNG Image ---------------------------------------
 
@@ -60,6 +118,9 @@ instance Binary PNGDataStream where
         put iend
     get = undefined
 
+
+createPNGDataStream :: PNGDataStream
+createPNGDataStream = undefined
 
 
 data Palette = Palette [(Red, Green, Blue)] AlphaTable
@@ -163,12 +224,6 @@ shouldIndex :: PNGImg -> Bool
 shouldIndex = undefined
 
 
--- prepare a summary of information about the PNG 
-pngInfo :: PNGImg -> String
-pngInfo = undefined
-
-
-
 -------------------------- Color Type ---------------------------------------
 
 -- a single-byte integer that defines the PNG image type.  Only certain
@@ -222,7 +277,8 @@ bitDepths = [(Grayscale,[1,2,4,8,16]),
 
 -- The PNG signature is an 8 byte value that must be present at the start
 -- of all valid PNG data streams.
-pngSignature = B.pack [137,80,78,71,13,10,26,10]
+pngSignature :: B.ByteString
+pngSignature = B.pack ([137,80,78,71,13,10,26,10]::[Word8])
 
 -------------------------------- Chunks ------------------------------------
 
@@ -273,8 +329,10 @@ data ChunkType = IHDRType | IFTRType
 
 
 -- A valid bit depth has the value 1, 2, 4, 8, or 16. 
-data BitDepth = BitDepth Word8 deriving (Eq, Show, Ord)
+data BitDepth = BitDepth Word8 deriving (Eq, Ord)
 
+instance Show BitDepth where
+    show (BitDepth d) = show d
 
 
 instance Binary BitDepth where
@@ -299,14 +357,18 @@ data IHDRChunk = IHDRChunk {
 
 -- The only compression method defined in the PNG standard is deflate/inflate
 -- compression with a sliding window of at most 32768 bytes
-data CompressionMethod = DeflateInflate deriving (Eq, Show)
+data CompressionMethod = DeflateInflate deriving (Eq)
+
+instance Show CompressionMethod where
+    show DeflateInflate = "deflate/inflate"
 
 instance Binary CompressionMethod where
     get = undefined
     put method = put (0 :: Word8)
 
 
-data FilterMethod = DefaultFilterMethod
+-- only one filter method is defined
+data FilterMethod = AdaptiveFiltering
 
 
 instance Binary FilterMethod where
@@ -314,11 +376,14 @@ instance Binary FilterMethod where
     put method = put (0 :: Word8)
 
 instance Show FilterMethod where
-    show DefaultFilterMethod = "default"
+    show AdaptiveFiltering = "adaptive filtering"
 
 
-data InterlaceMethod = Null | Adam7 deriving (Eq, Show)
+data InterlaceMethod = Null | Adam7 deriving (Eq)
 
+instance Show InterlaceMethod where
+    show Null = "no interface"
+    show Adam7 = "Adam7"
 
 instance Binary InterlaceMethod where
     get = undefined
@@ -346,13 +411,15 @@ instance Binary IHDRChunk where
 
 instance Show IHDRChunk where
     show c = "(IHDRChunk " ++
-             " w =" ++ show (ihdrWidth c) ++
-             " h =" ++ show (ihdrHeight c) ++
-             " bit depth =" ++ show (ihdrBitDepth c) ++
-             " color type =" ++ show (ihdrColorType c) ++
-             " compression method =" ++ show (ihdrCompressionMethod c) ++
-             " filter method =" ++ show (ihdrFilterMethod c) ++ " interlace method=" ++ show (ihdrInterlaceMethod c) ++ " crc=?)"
-             where conv = show . runGet getWord8 . L.fromStrict 
+             "w=" ++ show (ihdrWidth c) ++
+             ", h=" ++ show (ihdrHeight c) ++
+             ", bit depth=" ++ show (ihdrBitDepth c) ++
+             ", color type=" ++ show (ihdrColorType c) ++
+             ", compression method=" ++ show (ihdrCompressionMethod c) ++
+             ", filter method=" ++ show (ihdrFilterMethod c) ++
+             ", interlace method=" ++ show (ihdrInterlaceMethod c) ++
+             ", crc=" ++ show (ihdrCRC c) ++
+             ")"
 
 
 ------------------------------ IDAT Chunk -------------------------------------
@@ -362,7 +429,10 @@ data IDATChunk = IDATChunk {
     idatCRC :: Word32} 
 
 instance Show IDATChunk where
-    show c = "(IDATChunk length=" ++ (show (idatLength c)) ++ ")"
+    show c = "(IDATChunk " ++
+             "length=" ++ (show (idatLength c)) ++
+             ", crc=" ++ (show (idatCRC c)) ++ 
+             ")"
 
 
 instance Binary IDATChunk where
@@ -374,6 +444,14 @@ instance Binary IDATChunk where
 
 
 ------------------------------ IEND Chunk ------------------------------------
+
+data IENDChunk = IENDChunk {iendLength::Word32, iendCRC::Word32}
+
+instance Show IENDChunk where
+    show chunk = "(IENDChunk " ++
+                     "length=" ++ show (iendLength chunk) ++
+                     ", crc=" ++ show (iendCRC chunk) ++
+                     ")"
 
 iend :: B.ByteString
 iend = "IEND"
@@ -405,5 +483,3 @@ data ANCIChunk = ANCIChunk {
 }
 instance Show ANCIChunk where
     show c = "(ANCIChunk length=" ++ (show (anciLength c)) ++ ")"
-
-
