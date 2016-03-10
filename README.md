@@ -9,7 +9,7 @@ files.
 pnginfo displays detailed information about a png file. To use:
 
 ```
-pnginfo filanem
+pnginfo filename
 ```
 
 ## PNGCREATE
