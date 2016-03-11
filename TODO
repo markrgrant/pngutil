@@ -1,0 +1,11 @@
+# TODO
+
+* properly compute chunk CRC values in the pngcreate utility
+* report total file size in pnginfo output
+* display ancillary chunk information such as comments, gamma data, etc. in
+  the pnginfo output
+* provide hints in the pnginfo output about image improvement such as whether
+  the image should be indexed
+* analyze space (memory) and time performance during encoding/decoding
+* create an optimization utility that can apply optimizations to a PNG such as
+  reducing or increasing its bit depth, changing its size, etc.
