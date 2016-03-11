@@ -7,6 +7,7 @@
 
 module PNG where
 
+import Util (computeCRC)
 
 import Data.Binary.Get (runGet, getWord32be, getWord8)
 import Data.Binary (Binary, put, get)
@@ -111,12 +112,12 @@ data PNGDataStream = PNGDataStream IHDRChunk [IDATChunk] deriving (Show)
 
 -- defines how a PNG data stream is serialized into bytes. 
 instance Binary PNGDataStream where
+    get = undefined
     put (PNGDataStream ihdr idats) = do
-        put pngSignature
+        put (PNGSig pngSignature)
         put ihdr
         put idats
-        put iend
-    get = undefined
+        put $ IENDChunk {iendLength=0, iendCRC=0}
 
 
 createPNGDataStream :: PNGDataStream
@@ -139,8 +140,8 @@ type Green = Int
 -- 4.  Compression
 -- 5.  Chunking
 -- 6.  Datastream construction
-encode :: PNGImg -> B.ByteString
-encode = passExtraction >> scanlineSerialization >> filtering >>
+encodePNG :: PNGImg -> B.ByteString
+encodePNG = passExtraction >> scanlineSerialization >> filtering >>
     compression >> chunking >> datastreamConstruction
 
 
@@ -277,8 +278,26 @@ bitDepths = [(Grayscale,[1,2,4,8,16]),
 
 -- The PNG signature is an 8 byte value that must be present at the start
 -- of all valid PNG data streams.
-pngSignature :: B.ByteString
-pngSignature = B.pack ([137,80,78,71,13,10,26,10]::[Word8])
+
+
+---------------------------- PNG Signature ---------------------------------
+
+data PNGSig = PNGSig [Word8]
+
+instance Binary PNGSig where
+    get = undefined
+    put (PNGSig words) = do
+        put $ words!!0
+        put $ words!!1
+        put $ words!!2
+        put $ words!!3
+        put $ words!!4
+        put $ words!!5
+        put $ words!!6
+        put $ words!!7
+
+pngSignature :: [Word8]
+pngSignature = [137,80,78,71,13,10,26,10]::[Word8]
 
 -------------------------------- Chunks ------------------------------------
 
@@ -343,6 +362,8 @@ instance Binary BitDepth where
 
 -- The first chunk in all png data streams
 data IHDRChunk = IHDRChunk {
+    ihdrLength :: Word32,
+    ihdrChunkType :: IHDRChunkType,
     ihdrWidth :: Word32,                  -- image width in pixels
     ihdrHeight :: Word32,                 -- image height in pixels
     ihdrBitDepth :: BitDepth,             -- bits per sample or pallete index.
@@ -391,14 +412,26 @@ instance Binary InterlaceMethod where
     put Adam7 = put (1 :: Word8)
 
 
-ihdrChunkType :: B.ByteString
-ihdrChunkType =  B.pack [73,72,68,82]
+
+data IHDRChunkType = IHDRChunkType [Word8]
+
+ihdrBytes :: [Word8]
+ihdrBytes = [73, 72, 68, 82]
+
+
+instance Binary IHDRChunkType where
+    get = undefined
+    put (IHDRChunkType words) = do
+        put $ words!!0 
+        put $ words!!1
+        put $ words!!2
+        put $ words!!3
 
 
 instance Binary IHDRChunk where
     put ihdr = do
-        put (0 :: Word32)  -- ihdr chunk length is zero
-        put ihdrChunkType
+        put $ ihdrLength ihdr
+        put $ ihdrChunkType ihdr
         put $ ihdrWidth ihdr
         put $ ihdrHeight ihdr
         put $ ihdrBitDepth ihdr
@@ -407,11 +440,14 @@ instance Binary IHDRChunk where
         put $ ihdrFilterMethod ihdr
         put $ ihdrInterlaceMethod ihdr
         put $ ihdrCRC ihdr
+        -- TODO: calculate CRC
+        -- put $ computeCRC $ B.concat [c,w,h,d,t,cm,fm,im]
     get = undefined
 
 instance Show IHDRChunk where
     show c = "(IHDRChunk " ++
-             "w=" ++ show (ihdrWidth c) ++
+             "length=" ++ show (ihdrLength c) ++
+             ", w=" ++ show (ihdrWidth c) ++
              ", h=" ++ show (ihdrHeight c) ++
              ", bit depth=" ++ show (ihdrBitDepth c) ++
              ", color type=" ++ show (ihdrColorType c) ++
@@ -420,7 +456,6 @@ instance Show IHDRChunk where
              ", interlace method=" ++ show (ihdrInterlaceMethod c) ++
              ", crc=" ++ show (ihdrCRC c) ++
              ")"
-
 
 ------------------------------ IDAT Chunk -------------------------------------
 data IDATChunk = IDATChunk {
@@ -439,6 +474,7 @@ instance Binary IDATChunk where
     get = undefined -- using attoparsec
     put idat = do
         put $ idatLength idat
+        put ("IDAT"::B.ByteString)
         put $ idatData idat
         put $ idatCRC idat
 
@@ -455,6 +491,14 @@ instance Show IENDChunk where
 
 iend :: B.ByteString
 iend = "IEND"
+
+
+instance Binary IENDChunk where
+    get = undefined
+    put chunk = do
+        put $ iendLength chunk -- the length is zero
+        put iend
+        put $ iendCRC chunk   -- TODO: is the crc zero?
 
 
 ----------------------------- Ancillary Chunks -------------------------------

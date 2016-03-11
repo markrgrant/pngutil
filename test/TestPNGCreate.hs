@@ -1,4 +1,4 @@
-import PNG
+import PNGCreate
 import System.Exit (exitSuccess, exitFailure)
 
 

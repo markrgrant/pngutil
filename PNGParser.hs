@@ -42,8 +42,8 @@ lengthParser = do
 -- signature and must always be present.
 ihdrParser :: Parser IHDRChunk
 ihdrParser = do
-    _ <- lengthParser
-    _ <- string "IHDR"
+    l <- lengthParser
+    t <- string "IHDR"
     w <- lengthParser
     h <- lengthParser
     b@(BitDepth bd) <- bitDepthParser
@@ -59,6 +59,7 @@ ihdrParser = do
                 i <- interlaceMethodParser
                 crc <- crcParser
                 return IHDRChunk {
+                    ihdrLength=l, ihdrChunkType=IHDRChunkType (B.unpack t), 
                     ihdrWidth=w, ihdrHeight=h, ihdrBitDepth=b, ihdrColorType=c,
                     ihdrCompressionMethod=m, ihdrFilterMethod=f,
                     ihdrInterlaceMethod=i, ihdrCRC=crc}
@@ -146,4 +147,4 @@ bitDepthParser = do
 
 
 sigParser :: Parser B.ByteString
-sigParser = string pngSignature
+sigParser = string $ B.pack pngSignature

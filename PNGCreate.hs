@@ -8,6 +8,7 @@ import Text.Read (readMaybe)
 import qualified Data.Binary as DB
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
+import qualified Data.ByteString.Lazy.Char8 as LC
 import Data.Attoparsec.ByteString as A
 
 
@@ -16,27 +17,29 @@ import Data.Attoparsec.ByteString as A
 -- desired specifications. 
 pngcreate :: RefImg-> PNGDataStream
 pngcreate refimg = 
-    let bitdepth = maximum [
-            channelDepth (refRed refimg),
-            channelDepth (refGreen refimg),
-            channelDepth (refBlue refimg),
-            channelDepth (refAlpha refimg)]
-        ihdr = IHDRChunk {
+    let ihdr = IHDRChunk {
+            -- the length of a chunk only includes the length 
+            -- of its data, not length or type or crc.  So for
+            -- the ihdr its 4(width)+4(height)+1(bit depth)+
+            -- 1(colortype)+1(compressionmethod)+1(filtermethod)
+            -- +1(interlacemethod)=13
+            ihdrLength=13, 
+            ihdrChunkType=IHDRChunkType ihdrBytes,
             ihdrWidth=refWidth refimg,
             ihdrHeight=refHeight refimg,
-            ihdrBitDepth=bitdepth,
+            ihdrBitDepth=channelDepth (refRed refimg),
             ihdrColorType=Grayscale,
             ihdrCompressionMethod=DeflateInflate,
-            ihdrFilterMethod=DefaultFilterMethod,
+            ihdrFilterMethod=AdaptiveFiltering,
             ihdrInterlaceMethod=Null,
-            ihdrCRC=0
+            ihdrCRC=0 -- placeholder, this needs to be computedduring encoding
         }
         idat = IDATChunk {
             idatLength=0,
             idatData=B.empty,
-            idatCRC=0}
-    in
-        PNGDataStream ihdr [idat]
+            idatCRC=0 -- real value computed during decoding
+        }
+    in PNGDataStream ihdr [idat]
 
 
 data Args = Args {
@@ -46,23 +49,27 @@ data Args = Args {
     argsRedDepth :: BitDepth,
     argsGreenDepth :: BitDepth,
     argsBlueDepth :: BitDepth,
-    argsAlphaDepth :: BitDepth
+    argsAlphaDepth :: BitDepth, 
+    argsFilename :: String
 } deriving (Show)
 
 
 argsParser :: [String] -> Either String Args
 argsParser args = do
-    _ <- assertEither (length args == 7) "invalid # of arguments"
+    _ <- assertEither (length args == 5) "invalid # of arguments"
     w  <- resultToEither $ parse lengthParser (LB.toStrict (DB.encode (read (args!!0)::Word32)))
     h  <- resultToEither $ parse lengthParser (LB.toStrict (DB.encode (read (args!!1)::Word32)))
     ct <- resultToEither $ parse colorTypeParser (LB.toStrict (DB.encode (read (args!!2)::Word8)))
-    rd <- resultToEither $ parse (bitDepthParser ct) (LB.toStrict (DB.encode (read (args!!3)::Word8)))
-    gd <- resultToEither $ parse (bitDepthParser ct) (LB.toStrict (DB.encode (read (args!!4)::Word8)))
-    bd <- resultToEither $ parse (bitDepthParser ct) (LB.toStrict (DB.encode (read (args!!5)::Word8)))
-    ad <- resultToEither $ parse (bitDepthParser ct) (LB.toStrict (DB.encode (read (args!!6)::Word8)))
-    return Args {argsWidth=w, argsHeight=h, argsColorType=ct,
-                 argsRedDepth=rd, argsGreenDepth=gd, argsBlueDepth=bd,
-                 argsAlphaDepth=ad}
+    b@(BitDepth bd) <- resultToEither $ parse bitDepthParser (LB.toStrict (DB.encode (read (args!!3)::Word8)))
+    let maybeDepths = lookup ct bitDepths
+    case maybeDepths of
+        Nothing -> Left "unrecognized color type"
+        Just depths -> if bd `notElem` depths
+                           then Left "invalid bit depth for color type"
+                           else return Args {argsWidth=w, argsHeight=h,
+                               argsColorType=ct, argsRedDepth=b,
+                               argsGreenDepth=b, argsBlueDepth=b,
+                               argsAlphaDepth=b, argsFilename=args!!4}
 
 
 assertEither :: Bool -> String -> Either String Bool
@@ -74,17 +81,15 @@ resultToEither (Done _ r) = Right r
 resultToEither (Fail _ _ msg)  = Left msg
 resultToEither (Partial f) = resultToEither $ f ""
 
-usage = "\nusage: pngcreate width height colortype reddepth greendepth " ++
-        "bluedepth alphadepth\n\n" ++ 
+usage = "\nusage: pngcreate width height colortype bitdepth\n\n" ++ 
         "where:\n\n" ++
         "* width is the width of the image in pixels, must be > 0\n" ++
         "* height is the height of the image in pixels, must be > 0\n" ++
         "* colortype is the color type of the image, where 0 is grayscale,\n" ++
         "  2 is truecolor, 3 is indexed color, 4 is grayscale with alpha,\n" ++ 
         "  and 6 is truecolor with alpha\n" ++
-        "* reddepth, greendepth, bluedepth, and alphadepth are the bit\n" ++
-        "  depths to use for the corresponding color channel. Allowed bit\n" ++
-        "  depths depend on the color type: \n\n" ++
+        "* bitdepth is the bit depth to use for the color channels.\n" ++
+        "  Allowed bit depths depend on the color type: \n\n" ++
         "  color type             code  allowed bit depths\n" ++
         "  -----------------------------------------------\n" ++
         "  grayscale              0     1,2,4,8,16        \n" ++
@@ -136,4 +141,5 @@ main = do
                         channelDepth=a,
                         channelSamples=B.replicate (iw*ih*ia) 1}
                 }
-            LB.putStrLn $ DB.encode $ pngcreate refimg
+            putStrLn (argsFilename args)
+            DB.encodeFile (argsFilename args) $ pngcreate refimg
