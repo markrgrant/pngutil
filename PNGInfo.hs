@@ -12,6 +12,7 @@ pngInfo (PNGDataStream ihdr idats) =
     "\ncompression method = " ++ show (ihdrCompressionMethod ihdr) ++
     "\nfilter method      = " ++ show (ihdrFilterMethod ihdr) ++
     "\ninterlace method   = " ++ show (ihdrInterlaceMethod ihdr) ++
+    "\ncrc                = " ++ show (ihdrCRC ihdr) ++
     "\n# of data chunks   = " ++ show (length idats)
 
 
