@@ -114,6 +114,7 @@ data PNGImg = TruecolorWithAlphaImg | GrayscaleWithAlphaImg | TruecolorImg |
 -- no additional information, and are added during serialization.
 data PNGDataStream = PNGDataStream IHDRChunk [IDATChunk] deriving (Show)
 
+
 -- defines how a PNG data stream is serialized into bytes. 
 instance Binary PNGDataStream where
     get = undefined
@@ -377,7 +378,6 @@ data IHDRChunk = IHDRChunk {
 }
 
 
-
 -- The only compression method defined in the PNG standard is deflate/inflate
 -- compression with a sliding window of at most 32768 bytes
 data CompressionMethod = DeflateInflate deriving (Eq)
@@ -441,7 +441,6 @@ instance Binary IHDRChunk where
         put $ ihdrCompressionMethod ihdr
         put $ ihdrFilterMethod ihdr
         put $ ihdrInterlaceMethod ihdr
-        put $ ihdrCRC ihdr
         put $ crc32 $ LB.unpack $ LB.concat [
             encode (ihdrChunkType ihdr),
             encode (ihdrWidth ihdr),
@@ -452,6 +451,7 @@ instance Binary IHDRChunk where
             encode (ihdrFilterMethod ihdr),
             encode (ihdrInterlaceMethod ihdr)]
     get = undefined
+
 
 instance Show IHDRChunk where
     show c = "(IHDRChunk " ++

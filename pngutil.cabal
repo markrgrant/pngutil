@@ -17,7 +17,7 @@ cabal-version:       >=1.10
 
 
 library
-  exposed-modules:     PNG, PNGParser
+  exposed-modules:     PNG, PNGParser, PNGCreate, CRC32
   build-depends:       base       >=4.7 && <4.8,
                        bytestring >=0.10 && <0.11,
                        binary     >=0.7 && <0.8,
@@ -54,4 +54,11 @@ test-suite          test-pngcreate
   main-is:          TestPNGCreate.hs
   hs-source-dirs:   test
   build-depends:    base, pngutil
+  default-language: Haskell2010
+
+test-suite          test-png
+  type:             exitcode-stdio-1.0
+  main-is:          TestPNG.hs
+  hs-source-dirs:   test
+  build-depends:    base, pngutil, bytestring, binary
   default-language: Haskell2010
