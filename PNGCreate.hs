@@ -22,7 +22,7 @@ pngcreate refimg =
             -- of its data, not length or type or crc.  So for
             -- the ihdr its 4(width)+4(height)+1(bit depth)+
             -- 1(colortype)+1(compressionmethod)+1(filtermethod)
-            -- +1(interlacemethod)=13
+            -- +1(interlacemethod)=13 bytes
             ihdrLength=13, 
             ihdrChunkType=IHDRChunkType ihdrBytes,
             ihdrWidth=refWidth refimg,
@@ -35,60 +35,64 @@ pngcreate refimg =
             ihdrCRC=0 -- placeholder, this needs to be computedduring encoding
         }
         idat = IDATChunk {
-            idatLength=0,
+            -- 1(chunk type) + 4 * bit depth * width * height / 8
+            idatLength=fromIntegral $ 1 + 4 * B.length (channelSamples (refRed refimg)),
+            idatChunkType=IDATChunkType idatBytes,
             idatData=B.empty,
             idatCRC=0 -- real value computed during decoding
         }
     in PNGDataStream ihdr [idat]
 
 
+-- An type representing the inputs to the pngcreate command
 data Args = Args {
     argsWidth :: Word32,
     argsHeight :: Word32,
-    argsColorType :: ColorType,
-    argsRedDepth :: BitDepth,
-    argsGreenDepth :: BitDepth,
-    argsBlueDepth :: BitDepth,
-    argsAlphaDepth :: BitDepth, 
+    argsColorType :: Word8,
+    argsBitDepth :: Word8,
     argsFilename :: String
 } deriving (Show)
 
 
-argsParser :: [String] -> Either String Args
-argsParser args = do
-    _ <- assertEither (length args == 5) "invalid # of arguments"
-    w  <- resultToEither $ parse lengthParser (LB.toStrict (DB.encode (read (args!!0)::Word32)))
-    h  <- resultToEither $ parse lengthParser (LB.toStrict (DB.encode (read (args!!1)::Word32)))
-    ct <- resultToEither $ parse colorTypeParser (LB.toStrict (DB.encode (read (args!!2)::Word8)))
-    b@(BitDepth bd) <- resultToEither $ parse bitDepthParser (LB.toStrict (DB.encode (read (args!!3)::Word8)))
-    let maybeDepths = lookup ct bitDepths
-    case maybeDepths of
-        Nothing -> Left "unrecognized color type"
-        Just depths -> if bd `notElem` depths
-                           then Left "invalid bit depth for color type"
-                           else return Args {argsWidth=w, argsHeight=h,
-                               argsColorType=ct, argsRedDepth=b,
-                               argsGreenDepth=b, argsBlueDepth=b,
-                               argsAlphaDepth=b, argsFilename=args!!4}
+-- perform limited validation of the inputs to ensure all are present and
+-- of the appropriate type for further processing
+createArgs :: [String] -> Either String Args
+createArgs args = do
+    assertEither (length args == 5) "invalid number of arguments"
+    w <- eitherWord32 (args!!0) "invalid width"
+    h <- eitherWord32 (args!!1) "invalid height"
+    ct <- eitherWord8 (args!!2) "invalid color type"
+    bd <- eitherWord8 (args!!3) "invalid bit depth"
+    let fname = args!!4
+    return Args {argsWidth=w, argsHeight=h, argsColorType=ct, argsBitDepth=bd,
+                 argsFilename=fname}
+
+
+eitherWord32 :: String -> String -> Either String Word32
+eitherWord32 dat msg = case (readMaybe dat::Maybe Word32) of
+    Nothing -> Left msg
+    Just value -> Right value
+
+
+eitherWord8 :: String -> String -> Either String Word8
+eitherWord8 dat msg = case (readMaybe dat:: Maybe Word8) of
+    Nothing -> Left msg
+    Just value -> Right value
 
 
 assertEither :: Bool -> String -> Either String Bool
 assertEither b msg = if b then Right b else Left msg
 
 
-resultToEither :: IResult B.ByteString a -> Either String a
-resultToEither (Done _ r) = Right r
-resultToEither (Fail _ _ msg)  = Left msg
-resultToEither (Partial f) = resultToEither $ f ""
-
-usage = "\nusage: pngcreate width height colortype bitdepth\n\n" ++ 
+usage = "\nusage: pngcreate width height colortype bitdepth filename\n\n" ++ 
         "where:\n\n" ++
         "* width is the width of the image in pixels, must be > 0\n" ++
         "* height is the height of the image in pixels, must be > 0\n" ++
         "* colortype is the color type of the image, where 0 is grayscale,\n" ++
         "  2 is truecolor, 3 is indexed color, 4 is grayscale with alpha,\n" ++ 
         "  and 6 is truecolor with alpha\n" ++
-        "* bitdepth is the bit depth to use for the color channels.\n" ++
+        "* bitdepth is the bit depth to use for the color channels,\n" ++
+        "* filename is the name of the png file to be produced.\n" ++
         "  Allowed bit depths depend on the color type: \n\n" ++
         "  color type             code  allowed bit depths\n" ++
         "  -----------------------------------------------\n" ++
@@ -105,8 +109,8 @@ usage = "\nusage: pngcreate width height colortype bitdepth\n\n" ++
 main :: IO ()
 main = do
     argStrings <- getArgs
-    let maybeArgs = argsParser argStrings
-    case maybeArgs of
+    let eitherArgs = createArgs argStrings
+    case eitherArgs of
         Left msg -> do
             putStrLn msg
             putStrLn usage
@@ -114,32 +118,11 @@ main = do
             let w = argsWidth args
                 h = argsHeight args
                 ct = argsColorType args
-                r@(BitDepth rd) = argsRedDepth args
-                g@(BitDepth gd) = argsGreenDepth args
-                b@(BitDepth bd) = argsBlueDepth args
-                a@(BitDepth ad) = argsAlphaDepth args
-                iw = fromIntegral w
-                ih = fromIntegral h
-                ir = fromIntegral rd
-                ig = fromIntegral gd
-                ib = fromIntegral bd
-                ia = fromIntegral ad
-                refimg = RefImg {
-                    refWidth=w,
-                    refHeight=h,
-                    refColorType=ct,
-                    refRed=Channel{
-                        channelDepth=r,
-                        channelSamples=B.replicate (iw*ih*ir) 1},
-                    refGreen=Channel{
-                        channelDepth=g,
-                        channelSamples=B.replicate (iw*ih*ig) 1},
-                    refBlue=Channel{
-                        channelDepth=b,
-                        channelSamples=B.replicate (iw*ih*ib) 1},
-                    refAlpha=Channel{
-                        channelDepth=a,
-                        channelSamples=B.replicate (iw*ih*ia) 1}
-                }
-            putStrLn (argsFilename args)
-            DB.encodeFile (argsFilename args) $ pngcreate refimg
+                bd = argsBitDepth args
+                eitherRefImg = createRefImg w h ct bd bd bd bd
+            case eitherRefImg of
+                Left msg -> do
+                    putStrLn msg
+                    putStrLn usage
+                Right refImg -> do
+                    DB.encodeFile (argsFilename args) $ pngcreate refImg

@@ -18,10 +18,12 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     PNG, PNGParser
-  build-depends:       base >=4.7 && <4.8,
+  build-depends:       base       >=4.7 && <4.8,
                        bytestring >=0.10 && <0.11,
-                       binary >=0.7 && <0.8,
-                       attoparsec >=0.12 && <0.13
+                       binary     >=0.7 && <0.8,
+                       attoparsec >=0.12 && <0.13,
+                       vector
+                       
 
 executable pngcreate
   main-is:             PNGCreate.hs
@@ -30,7 +32,8 @@ executable pngcreate
   build-depends:       base >=4.7 && <4.8,
                        bytestring >=0.10 && <0.11,
                        binary >=0.7 && <0.8,
-                       attoparsec >=0.12 && <0.13
+                       attoparsec >=0.12 && <0.13,
+                       vector
 
 executable pnginfo
   main-is:             PNGInfo.hs
@@ -39,7 +42,8 @@ executable pnginfo
   build-depends:       base >=4.7 && <4.8,
                        bytestring >=0.10 && <0.11,
                        binary >=0.7 && <0.8,
-                       attoparsec >=0.12 && <0.13
+                       attoparsec >=0.12 && <0.13,
+                       vector
 
 
   -- hs-source-dirs:      

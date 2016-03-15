@@ -1,4 +1,5 @@
--- Table of CRCs of all 8-bit messages
+module CRC32 (crc32) where
+
 
 import qualified Data.Vector as V -- for O(1) lookup
 import Data.Bits
@@ -23,5 +24,5 @@ updateCRC table bytes = foldl func crc bytes
 
 
 -- Return the 1's complement of the computed crc
-crc :: V.Vector Word64 -> [Word8] -> Word64
-crc table bytes = updateCRC table bytes `xor` 0xffffffff
+crc32 :: [Word8] -> Word32
+crc32 bytes = fromIntegral (updateCRC crcTable bytes `xor` 0xffffffff) ::Word32

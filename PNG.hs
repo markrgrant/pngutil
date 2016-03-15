@@ -7,35 +7,55 @@
 
 module PNG where
 
-import Util (computeCRC)
+import CRC32 (crc32)
 
 import Data.Binary.Get (runGet, getWord32be, getWord8)
-import Data.Binary (Binary, put, get)
+import Data.Binary (Binary, put, get, encode)
 import Data.Word (Word8, Word32)
 import qualified Data.Attoparsec.ByteString as A
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as LB
 
 
 
----------------------------- Reference Image ---------------------------------
--- A reference image type.  It is an abstraction capable of representing any
--- image (grayscale, trucolor with alpha, etc.).  Different channels can
--- have different sample depths.
+---------------------------- RefImg -----------------------------------------
 
+-- Create a reference image with the given width, height, color type, and bit
+-- depths.  If invalid dimensions are provided, or an invalid color type,
+-- or bit depths that are not compatible with the given color type, a Left
+-- value is returned with an error message.
+createRefImg :: Word32 -> Word32 -> Word8 -> Word8 -> Word8 ->
+    Word8 -> Word8 -> Either String RefImg
+createRefImg w h c r g b a = do
+    vw <- createLength w
+    vh <- createLength h
+    vc <- createColorType c
+    vr <- createChannel vw vh vc r
+    vg <- createChannel vw vh vc g
+    vb <- createChannel vw vh vc b
+    va <- createChannel vw vh vc a
+    return RefImg {refWidth=w, refHeight=h,refColorType=vc, refRed=vr,
+        refGreen=vg, refBlue=vb, refAlpha=va}
+
+
+-- A RefImg is a reference image type.  It is an abstraction capable of
+-- representing any image (grayscale, trucolor with alpha, etc.).  Different
+-- channels can have different sample depths.
 data RefImg = RefImg {
-    refWidth :: Word32,
-    refHeight :: Word32,
+    refWidth     :: Word32,
+    refHeight    :: Word32,
     refColorType :: ColorType,
-    refRed :: Channel,
-    refBlue :: Channel,
-    refGreen :: Channel,
-    refAlpha :: Channel
+    refRed       :: Channel,
+    refBlue      :: Channel,
+    refGreen     :: Channel,
+    refAlpha     :: Channel
 }
 
 -- A channel is a uniform color with an intensity given by a sample depth, 
--- which is the number of bits used to represent the color.
+-- which is the number of bits used to represent one pixel of the color.  It
+-- also has samples associated with it, one sample per pixel in the image.
 data Channel = Channel {
-    channelDepth :: BitDepth, -- between 1 and 16 bits
+    channelDepth   :: BitDepth,
     channelSamples :: B.ByteString
 }
 
@@ -43,20 +63,6 @@ data Channel = Channel {
 replaceLeft :: Either String a -> String -> Either String a
 replaceLeft (Right x) msg = Right x
 replaceLeft (Left x) msg = Left msg
-
-
-createRefImg :: Word32 -> Word32 -> Word8 -> Word8 -> Word8 ->
-    Word8 -> Word8 -> Either String RefImg
-createRefImg w h c r g b a = do
-    vw <- replaceLeft (createLength w) "width must be > 0"
-    vh <- replaceLeft (createLength h) "height must be > 0"
-    vc <- (createColorType c)
-    vr <- replaceLeft (createChannel vw vh vc r) "red bit depth is invalid"
-    vg <- replaceLeft (createChannel vw vh vc g) "green bit depth is invalid"
-    vb <- replaceLeft (createChannel vw vh vc b) "blue bit depth  is invalid"
-    va <- replaceLeft (createChannel vw vh vc a) "alpha bit depth is invalid"
-    return RefImg {refWidth=w, refHeight=h,refColorType=vc, refRed=vr,
-        refGreen=vg, refBlue=vb, refAlpha=va}
 
 
 createColorType :: Word8 -> Either String ColorType
@@ -70,12 +76,10 @@ createColorType c =
         _ -> Left "unrecognized color type"
 
 
-
-
 -- A length is an integral value greater than zero
 createLength :: Word32 -> Either String Word32
 createLength x = if x <= 0
-    then Left "length must be > 0"
+    then Left "length must be greater than 0"
     else Right x
 
 
@@ -85,16 +89,16 @@ createChannel w h ct d =
     in case maybeDepths of
         Nothing -> Left "color type not found"
         Just depths -> if d `notElem` depths
-                           then Left "invalid depth for color type"
+                           then Left "invalid bit depth for color type"
                            else Right $ Channel {
                                channelDepth=BitDepth d,
-                               channelSamples=B.replicate (iw*ih*id `div` 8) 1}
+                               channelSamples=B.replicate numbytes 255}
     where iw = fromIntegral w 
           ih = fromIntegral h 
           id = fromIntegral d 
+          numbytes = iw * ih * id `div` 8
 
 --------------------------- PNG Image ---------------------------------------
-
 -- A data type containing the necessary information for producing a PNG data
 -- stream.
 data PNGImg = TruecolorWithAlphaImg | GrayscaleWithAlphaImg | TruecolorImg |
@@ -116,12 +120,11 @@ instance Binary PNGDataStream where
     put (PNGDataStream ihdr idats) = do
         put (PNGSig pngSignature)
         put ihdr
-        put idats
-        put $ IENDChunk {iendLength=0, iendCRC=0}
-
-
-createPNGDataStream :: PNGDataStream
-createPNGDataStream = undefined
+        mapM put idats
+        put $ IENDChunk {
+            iendLength=0,
+            iendChunkType=IENDChunkType iendBytes,
+            iendCRC=crc32 iendBytes}
 
 
 data Palette = Palette [(Red, Green, Blue)] AlphaTable
@@ -346,7 +349,6 @@ data Chunk = Chunk {
 data ChunkType = IHDRType | IFTRType
 
 
-
 -- A valid bit depth has the value 1, 2, 4, 8, or 16. 
 data BitDepth = BitDepth Word8 deriving (Eq, Ord)
 
@@ -440,8 +442,15 @@ instance Binary IHDRChunk where
         put $ ihdrFilterMethod ihdr
         put $ ihdrInterlaceMethod ihdr
         put $ ihdrCRC ihdr
-        -- TODO: calculate CRC
-        -- put $ computeCRC $ B.concat [c,w,h,d,t,cm,fm,im]
+        put $ crc32 $ LB.unpack $ LB.concat [
+            encode (ihdrChunkType ihdr),
+            encode (ihdrWidth ihdr),
+            encode (ihdrHeight ihdr),
+            encode (ihdrBitDepth ihdr),
+            encode (ihdrColorType ihdr),
+            encode (ihdrCompressionMethod ihdr),
+            encode (ihdrFilterMethod ihdr),
+            encode (ihdrInterlaceMethod ihdr)]
     get = undefined
 
 instance Show IHDRChunk where
@@ -460,6 +469,7 @@ instance Show IHDRChunk where
 ------------------------------ IDAT Chunk -------------------------------------
 data IDATChunk = IDATChunk {
     idatLength :: Word32,
+    idatChunkType :: IDATChunkType,
     idatData :: B.ByteString,
     idatCRC :: Word32} 
 
@@ -474,14 +484,32 @@ instance Binary IDATChunk where
     get = undefined -- using attoparsec
     put idat = do
         put $ idatLength idat
-        put ("IDAT"::B.ByteString)
+        put $ idatChunkType idat
         put $ idatData idat
         put $ idatCRC idat
 
 
+data IDATChunkType = IDATChunkType [Word8]
+
+idatBytes :: [Word8]
+idatBytes = [73, 68, 65, 84]
+
+
+instance Binary IDATChunkType where
+    get = undefined
+    put (IDATChunkType words) = do
+        put $ words!!0 
+        put $ words!!1
+        put $ words!!2
+        put $ words!!3
+
+
 ------------------------------ IEND Chunk ------------------------------------
 
-data IENDChunk = IENDChunk {iendLength::Word32, iendCRC::Word32}
+data IENDChunk = IENDChunk {
+    iendLength::Word32,
+    iendChunkType:: IENDChunkType,
+    iendCRC::Word32}
 
 instance Show IENDChunk where
     show chunk = "(IENDChunk " ++
@@ -489,16 +517,27 @@ instance Show IENDChunk where
                      ", crc=" ++ show (iendCRC chunk) ++
                      ")"
 
-iend :: B.ByteString
-iend = "IEND"
+data IENDChunkType = IENDChunkType [Word8]
+
+iendBytes :: [Word8]
+iendBytes = [73, 72, 68, 82]
+
+
+instance Binary IENDChunkType where
+    get = undefined
+    put (IENDChunkType words) = do
+        put $ words!!0 
+        put $ words!!1
+        put $ words!!2
+        put $ words!!3
 
 
 instance Binary IENDChunk where
     get = undefined
     put chunk = do
-        put $ iendLength chunk -- the length is zero
-        put iend
-        put $ iendCRC chunk   -- TODO: is the crc zero?
+        put $ iendLength chunk
+        put $ iendChunkType chunk
+        put $ iendCRC chunk
 
 
 ----------------------------- Ancillary Chunks -------------------------------
@@ -525,5 +564,7 @@ data ANCIChunk = ANCIChunk {
     anciData :: B.ByteString,
     anciCRC :: Word32
 }
+
+
 instance Show ANCIChunk where
     show c = "(ANCIChunk length=" ++ (show (anciLength c)) ++ ")"
