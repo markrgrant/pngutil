@@ -1,4 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
+module PNGCreate where
+
 
 import PNG
 import PNGParser
